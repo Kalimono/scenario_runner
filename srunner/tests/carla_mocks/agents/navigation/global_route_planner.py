@@ -38,7 +38,10 @@ class GlobalRoutePlanner(object):
         self._find_loose_ends()
         self._lane_change_link()
 
+        print("GlobalRoutePlanner: ready")
+
     def trace_route(self, origin, destination):
+        print("GlobalRoutePlanner: trace_route")
         """
         This method returns list of (carla.Waypoint, RoadOption)
         from origin to destination
@@ -78,6 +81,23 @@ class GlobalRoutePlanner(object):
                         destination_index = self._find_closest_in_list(destination_waypoint, path)
                         if closest_index > destination_index:
                             break
+
+        return route_trace
+
+    def trace_route_no_astar(self, origin, destination):
+        """
+        This method returns list of (carla.Waypoint, RoadOption)
+        from origin to destination without using A* search
+        """
+        route_trace = []
+
+        current_wp = self._wmap.get_waypoint(origin)
+        destination_wp = self._wmap.get_waypoint(destination)
+        
+        while current_wp.transform.location.distance(destination) > destination_wp.transform.location.distance(destination):
+            next_wp = current_wp.next(self._sampling_resolution)[0]
+            route_trace.append((next_wp, RoadOption.LANEFOLLOW))
+            current_wp = next_wp
 
         return route_trace
 

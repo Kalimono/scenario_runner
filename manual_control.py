@@ -897,6 +897,12 @@ def game_loop(args):
         display.fill((0,0,0))
         pygame.display.flip()
 
+        # settings = sim_world.get_settings()
+        # settings.tile_stream_distance = 500
+        # settings.actor_active_distance = 1000
+        # settings.spectator_as_ego = False
+        # sim_world.apply_settings(settings)
+
         hud = HUD(args.width, args.height)
         world = World(client.get_world(), hud, args)
         controller = KeyboardControl(world, args.autopilot)

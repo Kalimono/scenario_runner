@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="BicycleCollision_1" type="BicycleCollision" town="Town04">
+        <ego_vehicle x="258.476257" y="-185.648209" z="0.019585" yaw="-89.823250" model="vehicle.lincoln.mkz_2017" />
+    </scenario>
+</scenarios>

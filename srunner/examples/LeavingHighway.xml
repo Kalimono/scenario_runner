@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="LeavingHighway_1" type="LeavingHighway" town="Town04">
+        <ego_vehicle x="387.193573" y="84.802063" z="0.000000" yaw="-61.237587" model="vehicle.lincoln.mkz_2017" />
+    </scenario>
+</scenarios>

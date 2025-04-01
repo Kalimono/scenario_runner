@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="OvertakeRural_1" type="OvertakeRural" town="Town12">
+        <ego_vehicle x="3946.978271" y="2700.880859" z="369.530853" yaw="-90.0" model="vehicle.carlamotors.european_hgv" />
+        <weather cloudiness="0" precipitation="0" precipitation_deposits="0" wind_intensity="0" sun_azimuth_angle="0" sun_altitude_angle="75" />
+    </scenario>
+</scenarios>
