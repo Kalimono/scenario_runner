@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="ParkingLotPatrol_1" type="ParkingLotPatrol" town="Town04">
+        <ego_vehicle x="291.46" y="-187.95" z="0.23" yaw="-177.04"
+                     model="vehicle.lincoln.mkz_2017" rolename="hero"/>
+        <weather cloudiness="20" precipitation="0" precipitation_deposits="0"
+                 wind_intensity="10" sun_azimuth_angle="0" sun_altitude_angle="60"/>
+    </scenario>
+</scenarios>

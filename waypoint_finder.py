@@ -50,10 +50,9 @@ def draw_text(screen, text, pos, font, color=(255, 255, 255)):
     screen.blit(text_surface, pos)
 
 
-def draw_waypoint(world, waypoint, color):
-    # Draw the waypoint in the world
+def draw_point(world, location, color):
     world.debug.draw_string(
-        waypoint.transform.location,
+        location,
         "O",
         draw_shadow=False,
         color=color,
@@ -62,20 +61,22 @@ def draw_waypoint(world, waypoint, color):
     )
 
 
-def draw_waypoint_with_direction(world, waypoint, color, distance=2.0):
-    """Draw waypoint with its forward vector direction marker."""
-    # Draw the waypoint location
-    draw_waypoint(world, waypoint, color)
+def draw_waypoint(world, waypoint, color):
+    draw_point(world, waypoint.transform.location, color)
 
-    # Calculate forward vector position
-    forward_vec = waypoint.transform.get_forward_vector()
-    direction_location = waypoint.transform.location + carla.Location(
+
+def draw_transform_with_direction(world, transform, color, distance=2.0):
+    """Draw a transform location with its forward vector direction marker."""
+    loc = transform.location
+    draw_point(world, loc, color)
+
+    forward_vec = transform.get_forward_vector()
+    direction_location = loc + carla.Location(
         x=forward_vec.x * distance,
         y=forward_vec.y * distance,
-        z=forward_vec.z * distance
+        z=forward_vec.z * distance,
     )
 
-    # Draw the direction marker as "X"
     world.debug.draw_string(
         direction_location,
         "X",
@@ -85,9 +86,8 @@ def draw_waypoint_with_direction(world, waypoint, color, distance=2.0):
         persistent_lines=True,
     )
 
-    # Draw line connecting waypoint to direction marker
     world.debug.draw_line(
-        waypoint.transform.location,
+        loc,
         direction_location,
         thickness=0.1,
         color=color,
@@ -96,21 +96,39 @@ def draw_waypoint_with_direction(world, waypoint, color, distance=2.0):
     )
 
 
-def format_waypoint_python(waypoint, name=""):
-    """Format waypoint as Python carla.Transform."""
+def draw_waypoint_with_direction(world, waypoint, color, distance=2.0):
+    """Draw waypoint with its forward vector direction marker."""
+    draw_transform_with_direction(world, waypoint.transform, color, distance)
+
+
+def format_transform_python(transform, name=""):
+    """Format a carla.Transform as Python code."""
+    loc = transform.location
+    rot = transform.rotation
     return (
-        f"carla.Transform(carla.Location(x={waypoint.transform.location.x:.2f}, y={waypoint.transform.location.y:.2f}, z={waypoint.transform.location.z:.2f}), "
-        f"carla.Rotation(pitch={waypoint.transform.rotation.pitch:.2f}, yaw={waypoint.transform.rotation.yaw:.2f}, roll={waypoint.transform.rotation.roll:.2f})),"
+        f"carla.Transform(carla.Location(x={loc.x:.2f}, y={loc.y:.2f}, z={loc.z:.2f}), "
+        f"carla.Rotation(pitch={rot.pitch:.2f}, yaw={rot.yaw:.2f}, roll={rot.roll:.2f})),"
     )
 
 
-def format_waypoint_openscenario(waypoint, name=""):
-    """Format waypoint as OpenScenario WorldPosition XML."""
+def format_transform_openscenario(transform, name=""):
+    """Format a carla.Transform as OpenScenario WorldPosition XML."""
+    loc = transform.location
+    rot = transform.rotation
     return (
-        f'<WorldPosition x="{waypoint.transform.location.x:.2f}" y="{waypoint.transform.location.y:.2f}" '
-        f'z="{waypoint.transform.location.z:.2f}" h="{waypoint.transform.rotation.yaw:.2f}" '
-        f'p="{waypoint.transform.rotation.pitch:.2f}" r="{waypoint.transform.rotation.roll:.2f}"/>'
+        f'<WorldPosition x="{loc.x:.2f}" y="{loc.y:.2f}" '
+        f'z="{loc.z:.2f}" h="{rot.yaw:.2f}" '
+        f'p="{rot.pitch:.2f}" r="{rot.roll:.2f}"/>'
     )
+
+
+def raycast_down(world, location, max_distance=500.0):
+    """Cast a ray straight down from location and return first hit location, or None."""
+    ray_end = carla.Location(x=location.x, y=location.y, z=location.z - max_distance)
+    hits = world.cast_ray(location, ray_end)
+    if hits:
+        return hits[0].location
+    return None
 
 
 def main():
@@ -144,22 +162,25 @@ def main():
 
     running = True
     saved_msg_timer = 0
+    last_save_time = 0
+    save_cooldown_ms = 500  # ms before another save is allowed
 
     save_counter = config["save_counter"]
     wp_name = f"Waypoint_{save_counter}"
 
-    # Lane type settings
+    # Lane type settings — None signals "Raw" raycast mode
     lane_types = [
         ("Driving", carla.LaneType.Driving),
         ("Sidewalk", carla.LaneType.Sidewalk),
         ("Shoulder", carla.LaneType.Shoulder),
+        ("Raw", None),
     ]
-    
+
     current_lane_type_index = config["lane_type_index"]
     export_format = config["export_format"]  # "python" or "openscenario"
 
-    # Track saved waypoints to draw them in the world
-    saved_waypoints = []  # List of dicts: {"name": str, "waypoint": carla.Waypoint, "index": int}
+    # saved_waypoints entries: {name, transform, waypoint (or None), is_raw, index}
+    saved_waypoints = []
 
     # UI list settings
     list_panel_x = 450
@@ -167,6 +188,8 @@ def main():
     list_panel_width = 230
     list_panel_height = 420
     list_item_height = 60
+    visible_items = int(list_panel_height / list_item_height)
+    del_btn_width = 22  # width of the delete "X" button on each list item
     scroll_offset = 0
     last_click_time = 0
     last_click_index = -1
@@ -179,36 +202,81 @@ def main():
         location = transform.location
         rotation = transform.rotation
 
-        # Get waypoint based on current lane type
-        current_waypoint = carla_map.get_waypoint(
-            location, lane_type=lane_types[current_lane_type_index][1]
-        )
+        is_raw = lane_types[current_lane_type_index][1] is None
 
-        # Draw the current waypoint in the world (red) with direction
-        draw_waypoint_with_direction(world, current_waypoint, carla.Color(255, 0, 0))
+        # Resolve the current effective transform and waypoint
+        current_waypoint = None
+        if is_raw:
+            hit = raycast_down(world, location)
+            if hit is not None:
+                current_effective_transform = carla.Transform(hit, rotation)
+            else:
+                current_effective_transform = transform  # fallback: spectator itself
+        else:
+            current_waypoint = carla_map.get_waypoint(
+                location, lane_type=lane_types[current_lane_type_index][1]
+            )
+            current_effective_transform = current_waypoint.transform
 
-        # Draw all saved waypoints (yellow) with direction
-        for saved_wp_data in saved_waypoints:
-            draw_waypoint_with_direction(world, saved_wp_data["waypoint"], carla.Color(255, 255, 0))
+        # Draw current point (red) with direction
+        draw_transform_with_direction(world, current_effective_transform, carla.Color(255, 0, 0))
 
-        front_waypoint = current_waypoint
-        front_waypoint = front_waypoint.next(1)
-        for i in range(5):
-            try:
-                front_waypoint = front_waypoint[0].next(1)
-                draw_waypoint(world, front_waypoint[0], carla.Color(0, 255, 0))
-            except IndexError:
-                break
+        # Draw all saved points (yellow) with direction and sequential number label
+        for seq_num, saved_wp_data in enumerate(saved_waypoints, start=1):
+            draw_transform_with_direction(world, saved_wp_data["transform"], carla.Color(255, 255, 0))
+            label_loc = saved_wp_data["transform"].location + carla.Location(z=1.5)
+            world.debug.draw_string(
+                label_loc,
+                str(seq_num),
+                draw_shadow=False,
+                color=carla.Color(255, 220, 0),
+                life_time=1.0,
+                persistent_lines=True,
+            )
 
-        prev_waypoint = current_waypoint
-        prev_waypoint = prev_waypoint.previous(1)
-        for i in range(5):
-            try:
-                prev_waypoint = prev_waypoint[0].previous(1)
-                draw_waypoint(world, prev_waypoint[0], carla.Color(0, 255, 0))
-            except IndexError:
-                break
-        # Draw the waypoint in the world
+        # Draw road preview (next/prev waypoints) — only in waypoint modes
+        if not is_raw and current_waypoint is not None:
+            front_waypoint = current_waypoint.next(1)
+            for i in range(5):
+                try:
+                    front_waypoint = front_waypoint[0].next(1)
+                    draw_waypoint(world, front_waypoint[0], carla.Color(0, 255, 0))
+                except IndexError:
+                    break
+
+            prev_waypoint = current_waypoint.previous(1)
+            for i in range(5):
+                try:
+                    prev_waypoint = prev_waypoint[0].previous(1)
+                    draw_waypoint(world, prev_waypoint[0], carla.Color(0, 255, 0))
+                except IndexError:
+                    break
+
+        def do_save():
+            nonlocal save_counter, wp_name, saved_msg_timer, last_save_time
+            now = pygame.time.get_ticks()
+            if now - last_save_time < save_cooldown_ms:
+                return
+            if not wp_name.strip():
+                return
+            if export_format == "python":
+                entry = format_transform_python(current_effective_transform, wp_name) + "\n"
+            else:
+                entry = format_transform_openscenario(current_effective_transform, wp_name) + "\n"
+            print(entry.strip())
+            saved_waypoints.append({
+                "name": wp_name,
+                "transform": current_effective_transform,
+                "waypoint": current_waypoint,
+                "is_raw": is_raw,
+                "index": save_counter,
+            })
+            save_counter += 1
+            wp_name = f"Waypoint_{save_counter}"
+            saved_msg_timer = 60
+            last_save_time = now
+            config["save_counter"] = save_counter
+            save_config(config)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -216,67 +284,47 @@ def main():
 
             # Mouse wheel scrolling for waypoint list
             elif event.type == pygame.MOUSEWHEEL:
-                if mouse_pos[0] >= list_panel_x and mouse_pos[0] <= list_panel_x + list_panel_width:
+                if list_panel_x <= mouse_pos[0] <= list_panel_x + list_panel_width:
                     scroll_offset = max(0, min(scroll_offset - event.y, len(saved_waypoints) - int(list_panel_height / list_item_height)))
 
-            # Click in input box or waypoint list
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 # Check if click is in waypoint list
                 if (list_panel_x <= event.pos[0] <= list_panel_x + list_panel_width and
-                    list_panel_y <= event.pos[1] <= list_panel_y + list_panel_height):
-                    # Calculate which item was clicked
+                        list_panel_y <= event.pos[1] <= list_panel_y + list_panel_height):
                     relative_y = event.pos[1] - list_panel_y
                     clicked_index = int(relative_y / list_item_height) + scroll_offset
-
                     if 0 <= clicked_index < len(saved_waypoints):
-                        current_time = pygame.time.get_ticks()
-                        # Check for double-click (within 500ms)
-                        if (clicked_index == last_click_index and
-                            current_time - last_click_time < 500):
-                            # Double-click detected - teleport spectator
-                            wp_data = saved_waypoints[clicked_index]
-                            wp_loc = wp_data["waypoint"].transform.location
-                            teleport_location = carla.Location(
-                                x=wp_loc.x,
-                                y=wp_loc.y,
-                                z=wp_loc.z + 15.0
-                            )
-                            teleport_rotation = carla.Rotation(pitch=-90.0, yaw=0.0, roll=0.0)
-                            spectator.set_transform(carla.Transform(teleport_location, teleport_rotation))
-                            print(f"Teleported to {wp_data['name']}")
-                        last_click_time = current_time
-                        last_click_index = clicked_index
+                        # Delete button zone — rightmost del_btn_width px of the item
+                        if event.pos[0] >= list_panel_x + list_panel_width - del_btn_width:
+                            saved_waypoints.pop(clicked_index)
+                            scroll_offset = min(scroll_offset, max(0, len(saved_waypoints) - visible_items))
+                            last_click_index = -1
+                        else:
+                            current_time = pygame.time.get_ticks()
+                            if (clicked_index == last_click_index and
+                                    current_time - last_click_time < 500):
+                                # Double-click — teleport spectator above saved point
+                                wp_data = saved_waypoints[clicked_index]
+                                wp_loc = wp_data["transform"].location
+                                teleport_location = carla.Location(
+                                    x=wp_loc.x, y=wp_loc.y, z=wp_loc.z + 15.0
+                                )
+                                spectator.set_transform(carla.Transform(
+                                    teleport_location,
+                                    carla.Rotation(pitch=-90.0, yaw=0.0, roll=0.0)
+                                ))
+                                print(f"Teleported to {wp_data['name']}")
+                            last_click_time = current_time
+                            last_click_index = clicked_index
                     input_active = False
                 elif input_box.collidepoint(event.pos):
                     input_active = True
                 else:
                     input_active = False
 
-                if button_rect.collidepoint(event.pos) and wp_name.strip():
-                    # Save waypoint when button is clicked
-                    if export_format == "python":
-                        entry = format_waypoint_python(current_waypoint, wp_name) + "\n"
-                    else:  # openscenario
-                        entry = format_waypoint_openscenario(current_waypoint, wp_name) + "\n"
+                if button_rect.collidepoint(event.pos):
+                    do_save()
 
-                    print(entry.strip())
-
-                    # Add to saved waypoints list for visual marking
-                    saved_waypoints.append({
-                        "name": wp_name,
-                        "waypoint": current_waypoint,
-                        "index": save_counter
-                    })
-
-                    save_counter += 1
-                    wp_name = f"Waypoint_{save_counter}"
-                    saved_msg_timer = 60  # Show 'Saved' message for 60 frames
-
-                    # Update config
-                    config["save_counter"] = save_counter
-                    save_config(config)
-
-            # Handle text input
             elif event.type == pygame.KEYDOWN:
                 if input_active:
                     if event.key == pygame.K_RETURN:
@@ -286,58 +334,30 @@ def main():
                     else:
                         wp_name += event.unicode
                 else:
-                    # Handle keyboard shortcuts when input is not active
                     if event.key == pygame.K_TAB:
-                        # Cycle through lane types
                         current_lane_type_index = (current_lane_type_index + 1) % len(lane_types)
                         config["lane_type_index"] = current_lane_type_index
                         save_config(config)
                     elif event.key == pygame.K_s:
-                        # Quick save with 'S' key
-                        if wp_name.strip():
-                            if export_format == "python":
-                                entry = format_waypoint_python(current_waypoint, wp_name) + "\n"
-                            else:  # openscenario
-                                entry = format_waypoint_openscenario(current_waypoint, wp_name) + "\n"
-                            print(entry.strip())
-                            saved_waypoints.append({
-                                "name": wp_name,
-                                "waypoint": current_waypoint,
-                                "index": save_counter
-                            })
-                            save_counter += 1
-                            wp_name = f"Waypoint_{save_counter}"
-                            saved_msg_timer = 60
-                            config["save_counter"] = save_counter
-                            save_config(config)
+                        do_save()
                     elif event.key == pygame.K_e:
-                        # Toggle export format with 'E' key
                         export_format = "openscenario" if export_format == "python" else "python"
                         config["export_format"] = export_format
                         save_config(config)
 
-        # Display spectator + waypoint info
-        draw_text(screen, f"Spectator Location:", (20, 20), font)
-        draw_text(
-            screen,
-            f"X: {location.x:.2f}  Y: {location.y:.2f}  Z: {location.z:.2f}",
-            (20, 50),
-            font,
-        )
-        draw_text(
-            screen,
-            f"Rotation: Pitch: {rotation.pitch:.2f}  Yaw: {rotation.yaw:.2f}  Roll: {rotation.roll:.2f}",
-            (20, 80),
-            font,
-        )
+        # --- UI rendering ---
 
-        # Display current lane type and export format
+        draw_text(screen, "Spectator Location:", (20, 20), font)
+        draw_text(screen, f"X: {location.x:.2f}  Y: {location.y:.2f}  Z: {location.z:.2f}", (20, 50), font)
+        draw_text(screen, f"Rotation: Pitch: {rotation.pitch:.2f}  Yaw: {rotation.yaw:.2f}  Roll: {rotation.roll:.2f}", (20, 80), font)
+
+        lane_type_color = (255, 100, 100) if is_raw else (100, 255, 100)
         draw_text(
             screen,
             f"Lane Type: {lane_types[current_lane_type_index][0]} (TAB to cycle)",
             (20, 110),
             font,
-            color=(100, 255, 100),
+            color=lane_type_color,
         )
         draw_text(
             screen,
@@ -347,44 +367,35 @@ def main():
             color=(255, 200, 100),
         )
 
-        draw_text(screen, f"Closest Waypoint:", (20, 170), font)
-        draw_text(screen, f"Road ID: {current_waypoint.road_id}", (20, 200), font)
-        draw_text(screen, f"Lane ID: {current_waypoint.lane_id}", (20, 230), font)
-        draw_text(screen, f"Lane Change: {str(current_waypoint.lane_change)}", (20, 260), font)
-        draw_text(screen, f"Section ID: {current_waypoint.section_id}", (20, 290), font)
-        draw_text(
-            screen,
-            f"N lanes: {len(get_same_dir_lanes(current_waypoint))}",
-            (20, 320),
-            font,
-        )
-        draw_text(
-            screen,
-            f"N opposite lanes: {len(get_opposite_dir_lanes(current_waypoint))}",
-            (20, 350),
-            font,
-        )
-        draw_text(
-            screen,
-            f"Distance to intersection: {current_waypoint.transform.location.distance(current_waypoint.next_until_lane_end(1)[-1].transform.location):.2f}m",
-            (20, 380),
-            font,
-        )
-        draw_text(
-            screen,
-            f"Saved waypoints: {len(saved_waypoints)}",
-            (20, 410),
-            font,
-            color=(255, 255, 0),
-        )
+        if is_raw:
+            eff_loc = current_effective_transform.location
+            draw_text(screen, "Raw Hit Location:", (20, 170), font)
+            draw_text(screen, f"X: {eff_loc.x:.2f}  Y: {eff_loc.y:.2f}  Z: {eff_loc.z:.2f}", (20, 200), font)
+            draw_text(screen, "(Raycast hit — no road/lane data)", (20, 230), font, color=(180, 180, 180))
+        else:
+            draw_text(screen, "Closest Waypoint:", (20, 170), font)
+            draw_text(screen, f"Road ID: {current_waypoint.road_id}", (20, 200), font)
+            draw_text(screen, f"Lane ID: {current_waypoint.lane_id}", (20, 230), font)
+            draw_text(screen, f"Lane Change: {str(current_waypoint.lane_change)}", (20, 260), font)
+            draw_text(screen, f"Section ID: {current_waypoint.section_id}", (20, 290), font)
+            draw_text(screen, f"N lanes: {len(get_same_dir_lanes(current_waypoint))}", (20, 320), font)
+            draw_text(screen, f"N opposite lanes: {len(get_opposite_dir_lanes(current_waypoint))}", (20, 350), font)
+            draw_text(
+                screen,
+                f"Distance to intersection: {current_waypoint.transform.location.distance(current_waypoint.next_until_lane_end(1)[-1].transform.location):.2f}m",
+                (20, 380),
+                font,
+            )
 
-        # Draw input box
+        draw_text(screen, f"Saved waypoints: {len(saved_waypoints)}", (20, 410), font, color=(255, 255, 0))
+
+        # Input box
         pygame.draw.rect(screen, (255, 255, 255), input_box, 2)
         draw_text(screen, "WP Name:", (input_box.x, input_box.y - 25), font)
         txt_surface = font.render(wp_name, True, (255, 255, 255))
         screen.blit(txt_surface, (input_box.x + 5, input_box.y + 5))
 
-        # Draw save button
+        # Save button
         pygame.draw.rect(
             screen,
             button_hover_color if button_rect.collidepoint(mouse_pos) else button_color,
@@ -392,20 +403,17 @@ def main():
         )
         draw_text(screen, "Save Waypoint", (button_rect.x + 20, button_rect.y + 15), font)
 
-        # Draw saved message if recent
         if saved_msg_timer > 0:
             draw_text(screen, "Waypoint saved!", (250, 455), font, color=(0, 255, 0))
             saved_msg_timer -= 1
 
-        # Draw waypoint list panel
+        # Waypoint list panel
         pygame.draw.rect(screen, (50, 50, 50), (list_panel_x, list_panel_y, list_panel_width, list_panel_height))
         pygame.draw.rect(screen, (100, 100, 100), (list_panel_x, list_panel_y, list_panel_width, list_panel_height), 2)
 
         list_font = pygame.font.Font(None, 20)
         draw_text(screen, "Saved Waypoints (double-click to teleport):", (list_panel_x + 5, list_panel_y - 20), list_font, color=(200, 200, 200))
 
-        # Draw waypoint list items
-        visible_items = int(list_panel_height / list_item_height)
         for i in range(visible_items):
             wp_index = i + scroll_offset
             if wp_index >= len(saved_waypoints):
@@ -414,22 +422,30 @@ def main():
             wp_data = saved_waypoints[wp_index]
             item_y = list_panel_y + i * list_item_height
 
-            # Draw item background (alternate colors)
             item_color = (60, 60, 60) if wp_index % 2 == 0 else (70, 70, 70)
             pygame.draw.rect(screen, item_color, (list_panel_x + 2, item_y + 2, list_panel_width - 4, list_item_height - 4))
 
-            # Draw waypoint info
-            wp_loc = wp_data["waypoint"].transform.location
-            draw_text(screen, f"#{wp_data['index']}: {wp_data['name']}", (list_panel_x + 5, item_y + 5), list_font, color=(255, 255, 100))
+            wp_loc = wp_data["transform"].location
+            draw_text(screen, f"#{wp_index + 1}: {wp_data['name']}", (list_panel_x + 5, item_y + 5), list_font, color=(255, 255, 100))
             draw_text(screen, f"X:{wp_loc.x:.1f} Y:{wp_loc.y:.1f}", (list_panel_x + 5, item_y + 25), list_font, color=(200, 200, 200))
-            draw_text(screen, f"Road:{wp_data['waypoint'].road_id} Lane:{wp_data['waypoint'].lane_id}", (list_panel_x + 5, item_y + 43), list_font, color=(150, 150, 150))
+            if wp_data["is_raw"]:
+                draw_text(screen, "Raw", (list_panel_x + 5, item_y + 43), list_font, color=(255, 100, 100))
+            else:
+                draw_text(screen, f"Road:{wp_data['waypoint'].road_id} Lane:{wp_data['waypoint'].lane_id}", (list_panel_x + 5, item_y + 43), list_font, color=(150, 150, 150))
 
-        # Draw help/keyboard shortcuts
+            # Delete button ("X") on the right side of the item
+            del_btn_x = list_panel_x + list_panel_width - del_btn_width - 1
+            del_btn_y = item_y + (list_item_height - del_btn_width) // 2
+            del_hover = (del_btn_x <= mouse_pos[0] <= del_btn_x + del_btn_width and
+                         del_btn_y <= mouse_pos[1] <= del_btn_y + del_btn_width)
+            del_color = (220, 80, 80) if del_hover else (160, 50, 50)
+            pygame.draw.rect(screen, del_color, (del_btn_x, del_btn_y, del_btn_width, del_btn_width), border_radius=3)
+            draw_text(screen, "X", (del_btn_x + 5, del_btn_y + 3), list_font, color=(255, 255, 255))
+
+        # Keyboard shortcuts help
         help_font = pygame.font.Font(None, 22)
         draw_text(screen, "Keyboard Shortcuts:", (20, 540), help_font, color=(200, 200, 200))
         draw_text(screen, "TAB: Cycle lane types  |  S: Save waypoint  |  E: Toggle export format", (20, 565), help_font, color=(150, 150, 150))
-
-        # print(f"next_until_lane_end: {current_waypoint.next_until_lane_end(0.1)[-1]} previous_until_lane_start: {current_waypoint.previous_until_lane_start(0.1)[0]}")
 
         pygame.display.flip()
         clock.tick(30)
