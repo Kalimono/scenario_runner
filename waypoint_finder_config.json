@@ -1,0 +1,9 @@
+{
+  "lane_type_index": 0,
+  "save_counter": 35,
+  "export_format": "python",
+  "window_width": 700,
+  "window_height": 650,
+  "host": "127.0.0.1",
+  "port": 2000
+}
