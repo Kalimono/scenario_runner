@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="RuralRelaxation_1" type="RuralRelaxation" town="Town07">
+        <ego_vehicle x="-63.60" y="-136.10" z="0.22" yaw="180.00" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles loop_frequency="1" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="RuralRelaxation_2" type="RuralRelaxation" town="Town07">
+        <ego_vehicle x="-63.60" y="-136.10" z="0.22" yaw="180.00" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles loop_frequency="4" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="RuralRelaxation_3" type="RuralRelaxation" town="Town07">
+        <ego_vehicle x="-63.60" y="-136.10" z="0.22" yaw="180.00" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles loop_frequency="4" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="-30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="RuralRelaxation_4" type="RuralRelaxation" town="Town07">
+        <ego_vehicle x="-63.60" y="-136.10" z="0.22" yaw="180.00" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles loop_frequency="4" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="-30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+</scenarios>

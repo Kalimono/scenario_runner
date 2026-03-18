@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="LeavingHighway_1" type="LeavingHighway" town="Town04">
+        <ego_vehicle x="72.70" y="255.09" z="0.00" yaw="-34.76" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles first_lane_speed="15" second_lane_speed="20" fourth_lane_speed="25" first_lane_min_dist="140" first_lane_max_dist="160" second_lane_min_dist="130" second_lane_max_dist="150" fourth_lane_min_dist="160" fourth_lane_max_dist="180" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="LeavingHighway_2" type="LeavingHighway" town="Town04">
+        <ego_vehicle x="72.70" y="255.09" z="0.00" yaw="-34.76" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles first_lane_speed="12" second_lane_speed="17" fourth_lane_speed="22" first_lane_min_dist="200" first_lane_max_dist="220" second_lane_min_dist="190" second_lane_max_dist="210" fourth_lane_min_dist="200" fourth_lane_max_dist="220" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="LeavingHighway_3" type="LeavingHighway" town="Town04">
+        <ego_vehicle x="72.70" y="255.09" z="0.00" yaw="-34.76" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles first_lane_min_dist="70" first_lane_max_dist="90" second_lane_min_dist="90" second_lane_max_dist="110" fourth_lane_min_dist="140" fourth_lane_max_dist="160" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="-30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="LeavingHighway_4" type="LeavingHighway" town="Town04">
+        <ego_vehicle x="72.70" y="255.09" z="0.00" yaw="-34.76" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles first_lane_min_dist="70" first_lane_max_dist="90" second_lane_min_dist="90" second_lane_max_dist="110" fourth_lane_min_dist="140" fourth_lane_max_dist="160" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="-30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+</scenarios>
+
+
+

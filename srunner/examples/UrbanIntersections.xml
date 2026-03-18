@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="UrbanIntersections_1" type="UrbanIntersections" town="Town05">
+        <ego_vehicle x="155.09" y="74.78" z="0.04" yaw="269.95" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles n_others="30" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="UrbanIntersections_2" type="UrbanIntersections" town="Town05">
+        <ego_vehicle x="155.09" y="74.78" z="0.04" yaw="269.95" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles n_others="30" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="UrbanIntersections_3" type="UrbanIntersections" town="Town05">
+        <ego_vehicle x="155.09" y="74.78" z="0.04" yaw="269.95" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles n_others="30" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="-30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+    <scenario name="UrbanIntersections_4" type="UrbanIntersections" town="Town05">
+        <ego_vehicle x="155.09" y="74.78" z="0.04" yaw="269.95" model="vehicle.carlamotors.european_hgv" />
+        <other_vehicles n_others="30" />
+        <weather cloudiness="10" precipitation="0" precipitation_deposits="0" wind_intensity="30" sun_azimuth_angle="15" sun_altitude_angle="-30" fog_density="35" fog_distance="85" fog_falloff="2" />
+    </scenario>
+</scenarios>

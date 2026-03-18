@@ -1,7 +1,8 @@
 {
   "lane_type_index": 0,
-  "save_counter": 35,
+  "save_counter": 115,
   "export_format": "python",
+  "copy_to_clipboard": true,
   "window_width": 700,
   "window_height": 650,
   "host": "127.0.0.1",

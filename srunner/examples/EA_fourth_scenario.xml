@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="EA_fourth_scenario_1" type="EA_fourth_scenario" town="Town02">
+        <ego_vehicle x="171.27" y="216.62" z="1.00" yaw="00.00" model="vehicle.lincoln.mkz_2017" />
+        <!-- <ego_vehicle x="-7.38" y="127.60" z="2.00" yaw="90.13" model="vehicle.lincoln.mkz_2017" /> -->
+    </scenario>
+</scenarios>
+
+

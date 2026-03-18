@@ -20,6 +20,7 @@ def load_config():
         "lane_type_index": 0,
         "save_counter": 0,
         "export_format": "python",  # or "openscenario"
+        "copy_to_clipboard": True,
         "window_width": 700,
         "window_height": 650,
         "host": _HOST_,
@@ -122,6 +123,20 @@ def format_transform_openscenario(transform, name=""):
     )
 
 
+def copy_text_to_clipboard(text):
+    """Copy text to system clipboard using tkinter."""
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()
+        root.destroy()
+    except Exception as e:
+        print(f"Could not copy to clipboard: {e}")
+
+
 def raycast_down(world, location, max_distance=500.0):
     """Cast a ray straight down from location and return first hit location, or None."""
     ray_end = carla.Location(x=location.x, y=location.y, z=location.z - max_distance)
@@ -154,8 +169,19 @@ def main():
 
     # Connect to CARLA
     client = carla.Client(_HOST_, _PORT_)
-    client.set_timeout(2.0)
-    world = client.get_world()
+    client.set_timeout(60.0)
+    print(f"Connecting to CARLA at {_HOST_}:{_PORT_} ...")
+    for attempt in range(10):
+        try:
+            world = client.get_world()
+            break
+        except Exception as e:
+            print(f"  Attempt {attempt + 1}/10 failed: {e}. Retrying...")
+            pygame.time.wait(2000)
+    else:
+        print("Could not connect to CARLA after 10 attempts. Is the simulator running?")
+        pygame.quit()
+        return
     carla_map = world.get_map()
 
     data_provider = CarlaDataProvider()
@@ -178,6 +204,10 @@ def main():
 
     current_lane_type_index = config["lane_type_index"]
     export_format = config["export_format"]  # "python" or "openscenario"
+    copy_to_clipboard = config["copy_to_clipboard"]
+
+    # Clipboard checkbox settings
+    checkbox_rect = pygame.Rect(20, 435, 18, 18)
 
     # saved_waypoints entries: {name, transform, waypoint (or None), is_raw, index}
     saved_waypoints = []
@@ -209,7 +239,10 @@ def main():
         if is_raw:
             hit = raycast_down(world, location)
             if hit is not None:
-                current_effective_transform = carla.Transform(hit, rotation)
+                # Use only yaw from the spectator — pitch/roll reflect camera tilt, not road heading
+                current_effective_transform = carla.Transform(
+                    hit, carla.Rotation(pitch=0.0, yaw=rotation.yaw, roll=0.0)
+                )
             else:
                 current_effective_transform = transform  # fallback: spectator itself
         else:
@@ -264,6 +297,8 @@ def main():
             else:
                 entry = format_transform_openscenario(current_effective_transform, wp_name) + "\n"
             print(entry.strip())
+            if copy_to_clipboard:
+                copy_text_to_clipboard(entry.strip())
             saved_waypoints.append({
                 "name": wp_name,
                 "transform": current_effective_transform,
@@ -288,6 +323,11 @@ def main():
                     scroll_offset = max(0, min(scroll_offset - event.y, len(saved_waypoints) - int(list_panel_height / list_item_height)))
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                if checkbox_rect.collidepoint(event.pos):
+                    copy_to_clipboard = not copy_to_clipboard
+                    config["copy_to_clipboard"] = copy_to_clipboard
+                    save_config(config)
+
                 # Check if click is in waypoint list
                 if (list_panel_x <= event.pos[0] <= list_panel_x + list_panel_width and
                         list_panel_y <= event.pos[1] <= list_panel_y + list_panel_height):
@@ -344,6 +384,10 @@ def main():
                         export_format = "openscenario" if export_format == "python" else "python"
                         config["export_format"] = export_format
                         save_config(config)
+                    elif event.key == pygame.K_c:
+                        copy_to_clipboard = not copy_to_clipboard
+                        config["copy_to_clipboard"] = copy_to_clipboard
+                        save_config(config)
 
         # --- UI rendering ---
 
@@ -388,6 +432,12 @@ def main():
             )
 
         draw_text(screen, f"Saved waypoints: {len(saved_waypoints)}", (20, 410), font, color=(255, 255, 0))
+
+        # Clipboard checkbox
+        pygame.draw.rect(screen, (200, 200, 200), checkbox_rect, 2)
+        if copy_to_clipboard:
+            pygame.draw.rect(screen, (100, 220, 100), checkbox_rect.inflate(-4, -4))
+        draw_text(screen, "Copy to clipboard (C)", (checkbox_rect.right + 8, checkbox_rect.y), font, color=(200, 200, 200))
 
         # Input box
         pygame.draw.rect(screen, (255, 255, 255), input_box, 2)
@@ -445,7 +495,7 @@ def main():
         # Keyboard shortcuts help
         help_font = pygame.font.Font(None, 22)
         draw_text(screen, "Keyboard Shortcuts:", (20, 540), help_font, color=(200, 200, 200))
-        draw_text(screen, "TAB: Cycle lane types  |  S: Save waypoint  |  E: Toggle export format", (20, 565), help_font, color=(150, 150, 150))
+        draw_text(screen, "TAB: Cycle lane types  |  S: Save  |  E: Toggle format  |  C: Toggle clipboard", (20, 565), help_font, color=(150, 150, 150))
 
         pygame.display.flip()
         clock.tick(30)
@@ -454,6 +504,7 @@ def main():
     config["save_counter"] = save_counter
     config["lane_type_index"] = current_lane_type_index
     config["export_format"] = export_format
+    config["copy_to_clipboard"] = copy_to_clipboard
     save_config(config)
 
     pygame.quit()
