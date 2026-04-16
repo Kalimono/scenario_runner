@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="Introduction_1" type="Introduction" town="Town04">
+        <ego_vehicle x="362.13" y="-68.51" z="0.00" yaw="179.27" model="vehicle.lincoln.mkz_2020" />
+    </scenario>
+</scenarios>

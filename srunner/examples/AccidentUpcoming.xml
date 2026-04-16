@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<scenarios>
+    <scenario name="AccidentUpcoming_Low_1" type="AccidentUpcoming" town="Town04">
+        <ego_vehicle x="323.45" y="-198.43" z="0.00" yaw="-88.52" model="vehicle.lincoln.mkz_2020" />
+    </scenario>
+    <scenario name="AccidentUpcoming_High_1" type="AccidentUpcoming" town="Town04">
+        <ego_vehicle x="323.45" y="-198.43" z="0.00" yaw="-88.52" model="vehicle.lincoln.mkz_2020" />
+    </scenario>
+</scenarios>

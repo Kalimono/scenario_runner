@@ -1,0 +1,10 @@
+{
+  "NotebookProfileName": "Risk_assessment",
+  "NotebookDeviceName": "Risk_assessment",
+  "SourceID": "Risk_assessment_stream",
+  "ChannelModalities": {
+    "Ch1": "risk_level",
+    "Ch2": "driving_phase",
+    "Ch3": "driver_distracted"
+  }
+}

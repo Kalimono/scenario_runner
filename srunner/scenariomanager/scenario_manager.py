@@ -13,6 +13,7 @@ It must not be modified and is for reference only!
 from __future__ import print_function
 import sys
 import time
+import traceback
 
 import py_trees
 
@@ -124,17 +125,69 @@ class ScenarioManager(object):
         self._watchdog = Watchdog(float(self._timeout))
         self._watchdog.start()
         self._running = True
+        target_dt = None
+        next_tick_deadline = None
+        if self._sync_mode:
+            try:
+                ws = CarlaDataProvider.get_world().get_settings()
+                if ws.fixed_delta_seconds and ws.fixed_delta_seconds > 0:
+                    target_dt = float(ws.fixed_delta_seconds)
+                    next_tick_deadline = time.perf_counter() + target_dt
+            except Exception:  # pylint: disable=broad-except
+                pass
 
-        while self._running:
+        try:
+          while self._running:
             timestamp = None
             world = CarlaDataProvider.get_world()
-            if world:
-                snapshot = world.get_snapshot()
-                if snapshot:
-                    timestamp = snapshot.timestamp
+            try:
+                if world:
+                    snapshot = world.get_snapshot()
+                    if snapshot:
+                        timestamp = snapshot.timestamp
+            except Exception:  # pylint: disable=broad-except
+                print("[ScenarioManager] EXCEPTION in get_snapshot():")
+                traceback.print_exc()
+                self._running = False
+                break
             if timestamp:
-                self._tick_scenario(timestamp)
+                try:
+                    self._tick_scenario(timestamp)
+                except KeyboardInterrupt:
+                    print("[ScenarioManager] KeyboardInterrupt caught — watchdog timeout or Ctrl+C")
+                    print("[ScenarioManager] Watchdog status: {}".format(
+                        self._watchdog.get_status() if self._watchdog else "N/A"))
+                    traceback.print_exc()
+                    self._running = False
+                    break
+                except Exception:  # pylint: disable=broad-except
+                    print("[ScenarioManager] EXCEPTION in _tick_scenario (outer catch):")
+                    traceback.print_exc()
+                    self._running = False
+                    break
 
+            if target_dt is not None and self._running:
+                self._pace_sync_loop(next_tick_deadline, target_dt)
+                next_tick_deadline += target_dt
+                now = time.perf_counter()
+                if now > next_tick_deadline + target_dt:
+                    next_tick_deadline = now + target_dt
+
+        except KeyboardInterrupt:
+            print("[ScenarioManager] KeyboardInterrupt at top-level while loop — watchdog fired or Ctrl+C")
+            print("[ScenarioManager] Watchdog status: {}".format(
+                self._watchdog.get_status() if self._watchdog else "N/A"))
+            traceback.print_exc()
+        except SystemExit as e:
+            print("[ScenarioManager] SystemExit({}) caught at top-level".format(e.code))
+            traceback.print_exc()
+        except BaseException as e:
+            print("[ScenarioManager] BaseException caught at top-level: {} {}".format(type(e).__name__, e))
+            traceback.print_exc()
+
+        print("[ScenarioManager] Main loop exited. Tree status: {} Watchdog OK: {}".format(
+            self.scenario_tree.status,
+            self._watchdog.get_status() if self._watchdog else "N/A"))
         self.cleanup()
 
         self.end_system_time = time.time()
@@ -146,6 +199,26 @@ class ScenarioManager(object):
 
         if self.scenario_tree.status == py_trees.common.Status.FAILURE:
             print("ScenarioManager: Terminated due to failure")
+
+    @staticmethod
+    def _pace_sync_loop(deadline, target_dt):
+        """
+        Sleep coarsely, then yield in short slices until the next frame
+        deadline. If the loop is already behind, skip waiting entirely.
+        """
+        now = time.perf_counter()
+        if now >= deadline:
+            return
+
+        coarse_sleep_margin = min(0.002, target_dt * 0.25)
+        while True:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return
+            if remaining > coarse_sleep_margin:
+                time.sleep(remaining - coarse_sleep_margin)
+            else:
+                time.sleep(0)
 
     def _tick_scenario(self, timestamp):
         """
@@ -172,7 +245,18 @@ class ScenarioManager(object):
                 self.ego_vehicles[0].apply_control(ego_action)
 
             # Tick scenario
-            self.scenario_tree.tick_once()
+            try:
+                self.scenario_tree.tick_once()
+            except Exception as tick_exc:  # pylint: disable=broad-except
+                print("\n[ScenarioManager] EXCEPTION during scenario_tree.tick_once():")
+                traceback.print_exc()
+                print("[ScenarioManager] Tree state at crash:")
+                try:
+                    py_trees.display.print_ascii_tree(self.scenario_tree, show_status=True)
+                except Exception:  # pylint: disable=broad-except
+                    print("[ScenarioManager] (could not print tree)")
+                print("[ScenarioManager] Re-raising — scenario will stop.")
+                raise
 
             if self._debug_mode:
                 print("\n")
@@ -180,10 +264,23 @@ class ScenarioManager(object):
                 sys.stdout.flush()
 
             if self.scenario_tree.status != py_trees.common.Status.RUNNING:
+                print("[ScenarioManager] Tree stopped with status: {}".format(
+                    self.scenario_tree.status))
+                print("[ScenarioManager] Children statuses:")
+                for child in self.scenario_tree.children:
+                    print("[ScenarioManager]   '{}' -> {}".format(child.name, child.status))
+                    if hasattr(child, 'children'):
+                        for subchild in child.children:
+                            print("[ScenarioManager]     '{}' -> {}".format(subchild.name, subchild.status))
                 self._running = False
 
         if self._sync_mode and self._running and self._watchdog.get_status():
-            CarlaDataProvider.get_world().tick()
+            try:
+                CarlaDataProvider.get_world().tick()
+            except Exception:  # pylint: disable=broad-except
+                print("[ScenarioManager] EXCEPTION in world.tick():")
+                traceback.print_exc()
+                self._running = False
 
     def get_running_status(self):
         """

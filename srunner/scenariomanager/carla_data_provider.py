@@ -30,9 +30,8 @@ def calculate_velocity(actor):
     """
     Method to calculate the velocity of a actor
     """
-    velocity_squared = actor.get_velocity().x ** 2
-    velocity_squared += actor.get_velocity().y ** 2
-    return math.sqrt(velocity_squared)
+    vel = actor.get_velocity()
+    return math.sqrt(vel.x ** 2 + vel.y ** 2)
 
 
 class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
@@ -76,6 +75,7 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
     _runtime_init_flag = False
     _lock = threading.Lock()
     _latest_scenario = ""
+    _missing_location_warnings = set()
 
     @staticmethod
     def set_local_planner(plan):
@@ -141,23 +141,16 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
         Callback from CARLA
         """
         with CarlaDataProvider._lock:
-            for actor in CarlaDataProvider._actor_velocity_map.copy():
+            for actor in list(CarlaDataProvider._actor_velocity_map):
                 if actor is not None and actor.is_alive:
                     CarlaDataProvider._actor_velocity_map[actor] = calculate_velocity(actor)
+                    transform = actor.get_transform()
+                    CarlaDataProvider._actor_transform_map[actor] = transform
+                    CarlaDataProvider._actor_location_map[actor] = transform.location
                 else:
-                    del CarlaDataProvider._actor_velocity_map[actor]
-
-            for actor in CarlaDataProvider._actor_location_map.copy():
-                if actor is not None and actor.is_alive:
-                    CarlaDataProvider._actor_location_map[actor] = actor.get_location()
-                else:
-                    del CarlaDataProvider._actor_location_map[actor]
-
-            for actor in CarlaDataProvider._actor_transform_map.copy():
-                if actor is not None and actor.is_alive:
-                    CarlaDataProvider._actor_transform_map[actor] = actor.get_transform()
-                else:
-                    del CarlaDataProvider._actor_transform_map[actor]
+                    CarlaDataProvider._actor_velocity_map.pop(actor, None)
+                    CarlaDataProvider._actor_location_map.pop(actor, None)
+                    CarlaDataProvider._actor_transform_map.pop(actor, None)
 
             world = CarlaDataProvider._world
             if world is None:
@@ -187,15 +180,31 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
         """
         returns the location for the given actor
         """
+        if actor is None:
+            return None
+
         if actor in CarlaDataProvider._actor_location_map:
             return CarlaDataProvider._actor_location_map[actor]
         for key in CarlaDataProvider._actor_location_map:
             if key.id == actor.id:
                 return CarlaDataProvider._actor_location_map[key]
 
-        # We are intentionally not throwing here
-        # This may cause exception loops in py_trees
-        print('{}.get_location: {} not found!'.format(__name__, actor))
+        # Actor not in map — try direct API call as fallback (handles stale references)
+        try:
+            if not actor.is_alive:
+                return None
+        except Exception:  # pylint: disable=broad-except
+            pass
+        try:
+            loc = actor.get_location()
+            if loc is not None:
+                return loc
+        except Exception:  # pylint: disable=broad-except
+            pass
+        actor_id = getattr(actor, "id", None)
+        if actor_id not in CarlaDataProvider._missing_location_warnings:
+            CarlaDataProvider._missing_location_warnings.add(actor_id)
+            print('{}.get_location: {} not found!'.format(__name__, actor))
         return None
 
     @staticmethod
@@ -690,7 +699,16 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
                 for key, value in attribute_filter.items():
                     blueprints = [x for x in blueprints if check_attribute_value(x, key, value)]
 
-            blueprint = CarlaDataProvider._rng.choice(blueprints)
+            blueprints = sorted(blueprints, key=lambda bp: bp.id)
+            if not blueprints:
+                raise ValueError("No blueprints matched model filter {}".format(model))
+            # Use the seeded RNG for deterministic but varied vehicle selection
+            # when a wildcard filter is used (e.g. "vehicle.*").
+            if '*' in model:
+                idx = CarlaDataProvider._rng.randint(0, len(blueprints))
+                blueprint = blueprints[idx]
+            else:
+                blueprint = blueprints[0]
         except ValueError:
             # The model is not part of the blueprint library. Let's take a default one for the given category
             bp_filter = "vehicle.*"
@@ -698,7 +716,8 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
             if new_model != '':
                 bp_filter = new_model
             print("WARNING: Actor model {} not available. Using instead {}".format(model, new_model))
-            blueprint = CarlaDataProvider._rng.choice(CarlaDataProvider._blueprint_library.filter(bp_filter))
+            fallback_blueprints = sorted(CarlaDataProvider._blueprint_library.filter(bp_filter), key=lambda bp: bp.id)
+            blueprint = fallback_blueprints[0]
 
         # Set the color
         if color:
@@ -722,9 +741,8 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
                     )
                     blueprint.set_attribute('color', default_color)
         else:
-            if blueprint.has_attribute('color') and rolename != 'hero':
-                color = CarlaDataProvider._rng.choice(blueprint.get_attribute('color').recommended_values)
-                blueprint.set_attribute('color', color)
+            # Keep the blueprint's default color so runs remain identical across sessions.
+            pass
 
         # Make pedestrians mortal
         if blueprint.has_attribute('is_invincible'):

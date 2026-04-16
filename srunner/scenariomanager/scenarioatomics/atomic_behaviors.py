@@ -4289,6 +4289,7 @@ class ActorFlowSections(AtomicBehavior):
         actor_speed=20 / 3.6,
         initial_actors=False,
         initial_junction=False,
+        allow_lane_change=False,
         name="ActorFlow",
     ):
         """
@@ -4313,6 +4314,7 @@ class ActorFlowSections(AtomicBehavior):
 
         self._sink_dist = sink_dist
         self._initial_velocity_vector = initial_velocity_vector
+        self._allow_lane_change = allow_lane_change
         self._speed = actor_speed
         self._initial_actors = initial_actors
         self._initial_junction = initial_junction
@@ -4329,8 +4331,33 @@ class ActorFlowSections(AtomicBehavior):
 
         self._actor_list = []
         self._collision_sensor_list = []
+        self._pending_autopilot = []   # spawned this tick, need one world.tick() first
+        self._ready_autopilot = []     # had their tick, activate on next update()
 
         self._terminated = False
+        self._allow_spawning = True
+
+    def stop_spawning(self):
+        """Stop spawning new actors. Existing actors continue until they reach the sink."""
+        self._allow_spawning = False
+
+    def destroy_all_actors(self):
+        """Immediately destroy all actors currently tracked by this flow."""
+        for sensor in list(self._collision_sensor_list):
+            if sensor is not None:
+                try:
+                    sensor.stop()
+                    sensor.destroy()
+                except RuntimeError:
+                    pass
+        self._collision_sensor_list.clear()
+        for actor in list(self._actor_list):
+            try:
+                actor.set_autopilot(False, CarlaDataProvider.get_traffic_manager_port())
+                actor.destroy()
+            except RuntimeError:
+                pass
+        self._actor_list.clear()
 
     def initialise(self):
         if self._initial_actors:
@@ -4343,6 +4370,9 @@ class ActorFlowSections(AtomicBehavior):
 
                 section_wps = grp.trace_route(origin, destination)[5:-5]
                 plan += section_wps
+
+                if not plan:
+                    continue
 
                 ref_loc = plan[0][0].transform.location
                 for wp, _ in plan:
@@ -4365,32 +4395,48 @@ class ActorFlowSections(AtomicBehavior):
         if actor is None:
             return py_trees.common.Status.RUNNING
 
-        actor.set_autopilot(True, CarlaDataProvider.get_traffic_manager_port())
-        self._tm.set_path(actor, path)
-        self._tm.set_route(actor, ["Straight"])
-        self._tm.auto_lane_change(actor, False)
-        self._tm.set_desired_speed(actor, 3.6 * self._speed)
-        self._tm.update_vehicle_lights(actor, True)
-
         self._spawn_dist = self._rng.uniform(self._min_spawn_dist, self._max_spawn_dist)
 
         sensor = None
         if self._is_constant_velocity_active:
-            self._tm.ignore_vehicles_percentage(actor, 100)
-            actor.enable_constant_velocity(carla.Vector3D(self._speed, 0, 0))  # For when physics are active
-
             sensor = self._world.spawn_actor(self._collision_bp, carla.Transform(), attach_to=actor)
             sensor.listen(lambda _: self.stop_constant_velocity())
 
-        self._tm.ignore_lights_percentage(actor, 0)
-        self._tm.ignore_signs_percentage(actor, 0)
         self._collision_sensor_list.append(sensor)
         self._actor_list.append(actor)
 
-        actor.enable_constant_velocity(self._initial_velocity_vector)
+        iv = self._initial_velocity_vector
+        if iv.x != 0.0 or iv.y != 0.0 or iv.z != 0.0:
+            actor.enable_constant_velocity(iv)
+
+        # Defer autopilot + TM config to the next tick.  The actor must
+        # have at least one world.tick() before set_autopilot will take
+        # effect (matches generate_traffic.py pattern).
+        self._pending_autopilot.append((actor, path, sensor is not None))
 
     def update(self):
         """Controls the created actors and creaes / removes other when needed"""
+        # Activate autopilot on actors that have had at least one world.tick().
+        # Flow: _spawn_actor adds to _pending → next update() promotes to
+        # _ready → that same update() activates them.  This guarantees one
+        # tick between spawn and set_autopilot (required by CARLA TM).
+        for actor, path, has_cv in self._ready_autopilot:
+            if not actor.is_alive:
+                continue
+            actor.set_autopilot(True, CarlaDataProvider.get_traffic_manager_port())
+            self._tm.set_path(actor, path)
+            self._tm.set_route(actor, ["Straight"])
+            self._tm.auto_lane_change(actor, self._allow_lane_change)
+            self._tm.set_desired_speed(actor, 3.6 * self._speed)
+            self._tm.update_vehicle_lights(actor, True)
+            if has_cv:
+                self._tm.ignore_vehicles_percentage(actor, 100)
+                actor.enable_constant_velocity(carla.Vector3D(self._speed, 0, 0))
+            self._tm.ignore_lights_percentage(actor, 0)
+            self._tm.ignore_signs_percentage(actor, 0)
+        self._ready_autopilot = list(self._pending_autopilot)
+        self._pending_autopilot.clear()
+
         # Control the vehicles, removing them when needed
         for actor, sensor in zip(list(self._actor_list), list(self._collision_sensor_list)):
             location = CarlaDataProvider.get_location(actor)
@@ -4405,17 +4451,23 @@ class ActorFlowSections(AtomicBehavior):
                 actor.destroy()
                 self._actor_list.remove(actor)
 
-        # Spawn new actors if needed
-        if len(self._actor_list) == 0:
-            distance = self._spawn_dist + 1
-        else:
-            actor_location = CarlaDataProvider.get_location(self._actor_list[-1])
-            distance = self._source_location.distance(actor_location) if actor_location else 0
+        # Disable initial constant velocity once each actor has cleared the spawn area.
+        _kick_distance = self._min_spawn_dist * 0.4
+        for actor in list(self._actor_list):
+            loc = CarlaDataProvider.get_location(actor)
+            if loc and self._source_location.distance(loc) > _kick_distance:
+                actor.disable_constant_velocity()
 
-        if distance > self._spawn_dist:
-            if len(self._actor_list) > 0:
-                self._actor_list[-1].disable_constant_velocity()
-            self._spawn_actor(self._source_transform, self._sections[1:])
+        # Spawn new actors if needed
+        if self._allow_spawning:
+            if len(self._actor_list) == 0:
+                distance = self._spawn_dist + 1
+            else:
+                actor_location = CarlaDataProvider.get_location(self._actor_list[-1])
+                distance = self._source_location.distance(actor_location) if actor_location else 0
+
+            if distance > self._spawn_dist:
+                self._spawn_actor(self._source_transform, self._sections[1:])
 
         return py_trees.common.Status.RUNNING
 

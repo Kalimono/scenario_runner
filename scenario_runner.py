@@ -62,6 +62,39 @@ from srunner.scenarioconfigs.osc2_scenario_configuration import OSC2ScenarioConf
 MIN_CARLA_VERSION = '0.9.14'
 
 
+class StreamTee(object):
+
+    """Mirror writes to multiple streams."""
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for stream in self._streams:
+            try:
+                stream.write(data)
+            except UnicodeEncodeError:
+                safe_data = data.encode(getattr(stream, "encoding", "utf-8") or "utf-8", errors="replace").decode(
+                    getattr(stream, "encoding", "utf-8") or "utf-8", errors="replace"
+                )
+                stream.write(safe_data)
+        return len(data)
+
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
+
+
+def _restore_streams_and_close_log(log_file, stdout, stderr):
+    """Restore stdio before closing the mirrored log file."""
+    sys.stdout = stdout
+    sys.stderr = stderr
+    try:
+        log_file.flush()
+    finally:
+        log_file.close()
+
+
 class ScenarioRunner(object):
 
     """
@@ -172,7 +205,14 @@ class ScenarioRunner(object):
             # Get their module
             module_name = os.path.basename(scenario_file).split('.')[0]
             sys.path.insert(0, os.path.dirname(scenario_file))
-            scenario_module = importlib.import_module(module_name)
+            try:
+                scenario_module = importlib.import_module(module_name)
+            except Exception as exc:  # pylint: disable=broad-except
+                print("Skipping scenario module '{}': {} {}".format(
+                    scenario_file, type(exc).__name__, exc))
+                traceback.print_exc()
+                sys.path.pop(0)
+                continue
 
             # And their members of type class
             for member in inspect.getmembers(scenario_module, inspect.isclass):
@@ -221,6 +261,33 @@ class ScenarioRunner(object):
         if self.agent_instance:
             self.agent_instance.destroy()
             self.agent_instance = None
+
+    def _destroy_runtime_actors(self, world):
+        """
+        Best-effort cleanup when the simulator cannot reload the current map.
+        """
+        actor_patterns = [
+            'vehicle.*',
+            'walker.*',
+            'controller.*',
+            'sensor.*',
+            'static.prop.*',
+        ]
+        actor_ids = set()
+        for pattern in actor_patterns:
+            for actor in world.get_actors().filter(pattern):
+                actor_ids.add(actor.id)
+
+        if not actor_ids:
+            return
+
+        print("Reload fallback: destroying {} runtime actors from current world".format(len(actor_ids)))
+        batch = [carla.command.DestroyActor(actor_id) for actor_id in actor_ids]
+        self.client.apply_batch_sync(batch)
+
+        self.ego_vehicles = []
+        CarlaDataProvider.cleanup()
+        CarlaDataProvider.set_client(self.client)
 
     def _prepare_ego_vehicles(self, ego_vehicles):
         """
@@ -325,13 +392,61 @@ class ScenarioRunner(object):
         with open(file_name, 'w', encoding='utf-8') as fp:
             json.dump(criteria_dict, fp, sort_keys=False, indent=4)
 
+    def _resolve_map_name(self, town):
+        """
+        Resolve a short map name like 'Town04' to the exact path returned by the server.
+        """
+        def _normalize_map_name(value):
+            normalized_value = value.replace('\\', '/')
+            if normalized_value.startswith('/Game/'):
+                normalized_value = normalized_value[len('/Game/'):]
+            return normalized_value
+
+        available_maps = self.client.get_available_maps()
+        town_normalized = _normalize_map_name(town)
+        if town in available_maps:
+            return town_normalized
+
+        if town_normalized in available_maps:
+            return town_normalized
+
+        for candidate in available_maps:
+            candidate_normalized = _normalize_map_name(candidate)
+            if candidate_normalized.endswith('/' + town_normalized) or candidate_normalized.rsplit('/', 1)[-1] == town_normalized:
+                return candidate_normalized
+
+        return town_normalized
+
     def _load_and_wait_for_world(self, town, ego_vehicles=None):
         """
         Load a new CARLA world and provide data to CarlaDataProvider
         """
 
         if self._args.reloadWorld:
-            self.world = self.client.load_world(town)
+            current_world = self.client.get_world()
+            current_map_name = current_world.get_map().name.replace('\\', '/')
+            resolved_town = self._resolve_map_name(town).replace('\\', '/')
+            original_timeout = self.client_timeout
+            world_load_timeout = max(float(self.wait_for_world), float(self.client_timeout))
+
+            self.client.set_timeout(world_load_timeout)
+            try:
+                current_short_name = current_map_name.rsplit('/', 1)[-1]
+                requested_short_name = resolved_town.rsplit('/', 1)[-1]
+                if current_map_name == resolved_town or current_short_name == requested_short_name:
+                    print("Reloading current world '{}' via client.reload_world() with timeout {:.1f}s".format(
+                        current_world.get_map().name, world_load_timeout))
+                    try:
+                        self.world = self.client.reload_world()
+                    except RuntimeError as exc:
+                        print("reload_world() failed: {}. Falling back to actor cleanup on current world.".format(exc))
+                        self._destroy_runtime_actors(current_world)
+                        self.world = self.client.get_world()
+                else:
+                    print("Loading world '{}' with timeout {:.1f}s".format(resolved_town, world_load_timeout))
+                    self.world = self.client.load_world(resolved_town)
+            finally:
+                self.client.set_timeout(original_timeout)
         else:
             # if the world should not be reloaded, wait at least until all ego vehicles are ready
             ego_vehicle_found = False
@@ -399,6 +514,9 @@ class ScenarioRunner(object):
         tm.set_random_device_seed(int(self._args.trafficManagerSeed))
         if self._args.sync:
             tm.set_synchronous_mode(True)
+
+        # Attach participant ID so scenarios can include it in LSL streams.
+        config.participant_id = getattr(self._args, 'participant_id', '')
 
         # Prepare scenario
         print("Preparing scenario: " + config.name)
@@ -564,6 +682,16 @@ def main():
     """
     main function
     """
+    # Mirror output to both terminal and log file so startup failures remain visible.
+    _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenario_runner.log")
+    _log_file = open(_log_path, "w", buffering=1)  # line-buffered — flushes every line
+    _stdout = sys.stdout
+    _stderr = sys.stderr
+    sys.stdout = StreamTee(_stdout, _log_file)
+    sys.stderr = StreamTee(_stderr, _log_file)
+    import atexit
+    atexit.register(_restore_streams_and_close_log, _log_file, _stdout, _stderr)
+
     description = ("CARLA Scenario Runner: Setup, Run and Evaluate scenarios using CARLA\n"
                    "Current version: " + MIN_CARLA_VERSION)
 
@@ -584,8 +712,8 @@ def main():
     parser.add_argument('--sync', action='store_true',
                         help='Forces the simulation to run synchronously')
     parser.add_argument('--list', action="store_true", help='List all supported scenarios and exit')
-    parser.add_argument('--frameRate', default='20', type=float,
-                        help='Frame rate (Hz) to use in \'sync\' mode (default: 20)')
+    parser.add_argument('--frameRate', default='60', type=float,
+                        help='Frame rate (Hz) to use in \'sync\' mode (default: 60)')
 
     parser.add_argument(
         "--scenario",
@@ -622,6 +750,8 @@ def main():
     )
     parser.add_argument("--randomize", action="store_true", help="Scenario parameters are randomized")
     parser.add_argument("--repetitions", default=1, type=int, help="Number of scenario executions")
+    parser.add_argument("--participant-id", default="", type=str,
+                        help="Participant ID included in every LSL ego-vehicle sample (default: empty)")
     parser.add_argument(
         "--waitForEgo",
         action="store_true",
@@ -667,6 +797,15 @@ def main():
     try:
         scenario_runner = ScenarioRunner(arguments)
         result = scenario_runner.run()
+    except KeyboardInterrupt:
+        print("[Main] KeyboardInterrupt — watchdog or Ctrl+C")
+        traceback.print_exc()
+    except SystemExit as e:
+        print("[Main] SystemExit({})".format(e.code))
+        traceback.print_exc()
+    except BaseException as e:
+        print("[Main] BaseException: {} {}".format(type(e).__name__, e))
+        traceback.print_exc()
     except Exception:   # pylint: disable=broad-except
         traceback.print_exc()
 

@@ -1,0 +1,31 @@
+{
+  "NotebookProfileName": "Ego_vehicle",
+  "NotebookDeviceName": "Ego_vehicle",
+  "SourceID": "Ego_vehicle_stream",
+  "ChannelModalities": {
+    "Ch01": "speed_kmh",
+    "Ch02": "velocity_x",
+    "Ch03": "velocity_y",
+    "Ch04": "velocity_z",
+    "Ch05": "acceleration_x",
+    "Ch06": "acceleration_y",
+    "Ch07": "acceleration_z",
+    "Ch08": "throttle",
+    "Ch09": "steer",
+    "Ch10": "brake",
+    "Ch11": "hand_brake",
+    "Ch12": "reverse",
+    "Ch13": "gear",
+    "Ch14": "location_x",
+    "Ch15": "location_y",
+    "Ch16": "location_z",
+    "Ch17": "rotation_pitch",
+    "Ch18": "rotation_yaw",
+    "Ch19": "rotation_roll",
+    "Ch20": "angular_velocity_x",
+    "Ch21": "angular_velocity_y",
+    "Ch22": "angular_velocity_z",
+    "Ch23": "speed_limit",
+    "Ch24": "participant_id"
+  }
+}

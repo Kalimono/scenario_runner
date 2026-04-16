@@ -1,6 +1,9 @@
 <?xml version="1.0"?>
 <scenarios>
-    <scenario name="AccidentAhead_1" type="AccidentAhead" town="Town04">
-        <ego_vehicle x="291.08" y="-213.89" z="0.20" yaw="179.41" model="vehicle.lincoln.mkz_2017" />
+    <scenario name="AccidentAhead_Low_1" type="AccidentAhead" town="Town04">
+        <ego_vehicle x="180.44" y="-311.21" z="0.03" yaw="-179.86" model="vehicle.lincoln.mkz_2020" />
+    </scenario>
+    <scenario name="AccidentAhead_High_1" type="AccidentAhead" town="Town04">
+        <ego_vehicle x="180.44" y="-311.21" z="0.03" yaw="-179.86" model="vehicle.lincoln.mkz_2020" />
     </scenario>
 </scenarios>
